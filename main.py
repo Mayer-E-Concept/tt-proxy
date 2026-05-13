@@ -109,30 +109,32 @@ def _get_hours(date_from, date_to):
         if not user["password"]:
             continue
         count = 0
-        
-        events = fetch_events(user["email"], user["password"], date_from, date_to)
-        for evt in events:
-            name = (evt.get("p") or evt.get("c") or "").strip()
-            secs = float(evt.get("d") or 0)
-            if name and secs > 0:
-                result[name] = result.get(name, 0) + secs / 3600
-                count += 1
 
+        # Strategia principala: /projects cu worked_hours (total acurat)
+        r = requests.get(
+            "https://app.trackingtime.co/api/v4/projects",
+            headers=get_auth_header(user["email"], user["password"]),
+            timeout=15
+        )
+        if r.ok:
+            for p in r.json().get("data", []):
+                name = (p.get("name") or "").strip()
+                hours = float(p.get("worked_hours") or 0)
+                if not hours and p.get("accumulated_time"):
+                    hours = float(p["accumulated_time"]) / 3600
+                if name and hours > 0:
+                    result[name] = result.get(name, 0) + hours
+                    count += 1
+
+        # Fallback pe events daca projects nu are date
         if count == 0:
-            r = requests.get(
-                "https://app.trackingtime.co/api/v4/projects",
-                headers=get_auth_header(user["email"], user["password"]),
-                timeout=15
-            )
-            if r.ok:
-                for p in r.json().get("data", []):
-                    name = (p.get("name") or "").strip()
-                    hours = float(p.get("worked_hours") or 0)
-                    if not hours and p.get("accumulated_time"):
-                        hours = float(p["accumulated_time"]) / 3600
-                    if name and hours > 0:
-                        result[name] = result.get(name, 0) + hours
-                        count += 1
+            events = fetch_events(user["email"], user["password"], date_from, date_to)
+            for evt in events:
+                name = (evt.get("p") or evt.get("c") or "").strip()
+                secs = float(evt.get("d") or 0)
+                if name and secs > 0:
+                    result[name] = result.get(name, 0) + secs / 3600
+                    count += 1
 
         user_stats.append({"user": user["name"], "events": count})
 
@@ -140,7 +142,7 @@ def _get_hours(date_from, date_to):
         "projects": {k: round(v, 4) for k, v in result.items()},
         "count": len(result),
         "users": user_stats,
-        "range": f"{date_from} → {date_to}"
+        "range": "all time (via projects)"
     })
 
 if __name__ == "__main__":
