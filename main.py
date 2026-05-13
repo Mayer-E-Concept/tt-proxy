@@ -16,6 +16,22 @@ def get_auth_header():
     encoded = base64.b64encode(credentials.encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
+@app.route("/raw", methods=["GET"])
+def get_raw():
+    """Returneaza raspunsul brut de la TrackingTime pentru debug"""
+    try:
+        response = requests.get(
+            "https://app.trackingtime.co/api/v4/tasks",
+            headers=get_auth_header(),
+            timeout=10
+        )
+        return jsonify({
+            "status_code": response.status_code,
+            "raw": response.json()
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/hours", methods=["GET"])
 def get_hours():
     """Returneaza orele lucrate per proiect din TrackingTime"""
