@@ -3,7 +3,6 @@ from flask_cors import CORS
 import requests
 import base64
 import os
-from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -16,87 +15,92 @@ def get_auth_header():
     encoded = base64.b64encode(credentials.encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
-def fetch_all_pages(base_url, params=None):
-    """Fetch all pages from a paginated endpoint"""
-    all_items = []
-    page = 1
-    headers = get_auth_header()
-    
-    while True:
-        p = (params or {}).copy()
-        p["page"] = page
-        p["per_page"] = 100
-        
-        r = requests.get(base_url, headers=headers, params=p, timeout=15)
-        if not r.ok:
-            break
-        
-        data = r.json()
-        items = data.get("data", [])
-        
-        if not isinstance(items, list) or not items:
-            break
-        
-        all_items.extend(items)
-        
-        # Stop if we got less than per_page (last page)
-        if len(items) < 100:
-            break
-        
-        page += 1
-        if page > 20:  # Safety limit
-            break
-    
-    return all_items
+def tt_get(path, params=None):
+    r = requests.get(
+        f"https://app.trackingtime.co{path}",
+        headers=get_auth_header(),
+        params=params,
+        timeout=15
+    )
+    if r.ok:
+        return r.json()
+    return None
 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/debug", methods=["GET"])
+def debug():
+    """Testeaza endpoint-urile fara parametri extra"""
+    results = {}
+    
+    # Events fara parametri
+    d = tt_get("/api/v4/events")
+    if d:
+        items = d.get("data", [])
+        results["events_no_params"] = {
+            "count": len(items),
+            "first": items[0] if items else None
+        }
+    
+    # Events cu data curenta
+    d = tt_get("/api/v4/events", {"from": "2026-01-01", "to": "2026-12-31"})
+    if d:
+        items = d.get("data", [])
+        results["events_with_date"] = {"count": len(items)}
+
+    # Events cu date diferite
+    d = tt_get("/api/v4/events", {"start_date": "2026-01-01", "end_date": "2026-12-31"})
+    if d:
+        items = d.get("data", [])
+        results["events_start_end"] = {"count": len(items)}
+
+    # Projects fara parametri
+    d = tt_get("/api/v4/projects")
+    if d:
+        items = d.get("data", [])
+        results["projects_no_params"] = {
+            "count": len(items),
+            "names": [p.get("name") for p in items]
+        }
+    
+    # Projects cu limit
+    d = tt_get("/api/v4/projects", {"limit": 100})
+    if d:
+        items = d.get("data", [])
+        results["projects_limit100"] = {"count": len(items)}
+
+    return jsonify(results)
+
 @app.route("/hours", methods=["GET"])
 def get_hours():
-    """Returneaza orele lucrate per proiect agregat din events"""
-    try:
-        year = datetime.now().year
-        
-        # Strategia 1: Agregate din events (mai precis)
-        events = fetch_all_pages(
-            "https://app.trackingtime.co/api/v4/events",
-            {"from": f"{year}-01-01", "to": f"{year}-12-31"}
-        )
-        
-        result = {}
-        
-        if events:
-            for evt in events:
-                # Campul "c" sau "p" = project name, "d" = duration in seconds
-                name = (evt.get("c") or evt.get("p") or "").strip()
-                duration_sec = float(evt.get("d") or 0)
-                if name and duration_sec > 0:
-                    result[name] = result.get(name, 0) + duration_sec / 3600
-        
-        # Strategia 2: Fallback pe /projects daca events e gol
-        if not result:
-            projects = fetch_all_pages("https://app.trackingtime.co/api/v4/projects")
-            for p in projects:
+    result = {}
+    
+    # Incearca events fara parametri
+    d = tt_get("/api/v4/events")
+    if d:
+        items = d.get("data", [])
+        for evt in items:
+            name = (evt.get("c") or evt.get("p") or "").strip()
+            secs = float(evt.get("d") or 0)
+            if name and secs > 0:
+                result[name] = result.get(name, 0) + secs / 3600
+
+    # Fallback: projects
+    if not result:
+        d = tt_get("/api/v4/projects")
+        if d:
+            for p in d.get("data", []):
                 name = (p.get("name") or "").strip()
                 hours = float(p.get("worked_hours") or 0)
-                if not hours and p.get("accumulated_time"):
-                    hours = float(p["accumulated_time"]) / 3600
                 if name:
                     result[name] = hours
-        
-        # Rotunjire
-        result = {k: round(v, 1) for k, v in result.items()}
-        
-        return jsonify({
-            "projects": result,
-            "count": len(result),
-            "source": "events" if events else "projects"
-        })
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "projects": {k: round(v, 1) for k, v in result.items()},
+        "count": len(result)
+    })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
