@@ -3,11 +3,11 @@ from flask_cors import CORS
 import requests
 import base64
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
 
-# Credentiale per user - adauga toti membrii echipei
 USERS = [
     {
         "name": "Marius Poenar",
@@ -41,6 +41,27 @@ def tt_get(path, email, password, params=None):
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/debug_events", methods=["GET"])
+def debug_events():
+    """Arata toate campurile din primele 3 events ale lui Ioan"""
+    user = USERS[1]  # Ioan
+    d = tt_get("/api/v4/events", user["email"], user["password"])
+    if not d:
+        return jsonify({"error": "no data"})
+    items = d.get("data", [])
+    # Returnam primele 3 cu toate campurile
+    return jsonify({
+        "count": len(items),
+        "events": items[:3],
+        "all_project_names": list(set([
+            (evt.get("c") or "") + " | " + 
+            (evt.get("p") or "") + " | " + 
+            str(evt.get("pn") or "") + " | " + 
+            str(evt.get("t") or "")
+            for evt in items
+        ]))
+    })
+
 @app.route("/hours", methods=["GET"])
 def get_hours():
     """Agregate ore per proiect pentru toti userii"""
@@ -52,17 +73,16 @@ def get_hours():
             continue
 
         count = 0
-        # Events pentru userul curent
         d = tt_get("/api/v4/events", user["email"], user["password"])
         if d:
             for evt in d.get("data", []):
-                name = (evt.get("c") or evt.get("p") or "").strip()
+                # Incearca mai multe campuri pentru numele proiectului
+                name = (evt.get("p") or evt.get("c") or "").strip()
                 secs = float(evt.get("d") or 0)
                 if name and secs > 0:
                     result[name] = result.get(name, 0) + secs / 3600
                     count += 1
 
-        # Fallback: projects cu worked_hours
         if count == 0:
             d = tt_get("/api/v4/projects", user["email"], user["password"])
             if d:
