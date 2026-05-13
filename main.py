@@ -1,59 +1,79 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
 import base64
 import os
 
 app = Flask(__name__)
-CORS(app)  # Allow requests from any origin (planificator pe GitHub Pages)
+CORS(app)
 
-# Credentiale TrackingTime - setate ca variabile de mediu pe Railway
 TT_EMAIL = os.environ.get("TT_EMAIL", "m.poenar@me-concept.de")
-TT_PASSWORD = os.environ.get("TT_PASSWORD", "")  # Setezi pe Railway, nu in cod
+TT_PASSWORD = os.environ.get("TT_PASSWORD", "")
 
 def get_auth_header():
     credentials = f"{TT_EMAIL}:{TT_PASSWORD}"
     encoded = base64.b64encode(credentials.encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
 @app.route("/raw", methods=["GET"])
 def get_raw():
-    """Returneaza raspunsul brut de la TrackingTime pentru debug"""
-    try:
-        response = requests.get(
-            "https://app.trackingtime.co/api/v4/tasks",
-            headers=get_auth_header(),
-            timeout=10
-        )
-        return jsonify({
-            "status_code": response.status_code,
-            "raw": response.json()
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    """Testeaza mai multe endpoint-uri si returneaza primul cu date"""
+    endpoints = [
+        "/api/v4/tasks",
+        "/api/v4/projects", 
+        "/api/v4/tasks?filter=TRACKING",
+        "/api/v4/events",
+        "/api/v4/accounts/657424/projects",
+    ]
+    results = {}
+    for ep in endpoints:
+        try:
+            r = requests.get(
+                f"https://app.trackingtime.co{ep}",
+                headers=get_auth_header(),
+                timeout=10
+            )
+            data = r.json()
+            items = data.get("data") or data.get("response", {}).get("data") or []
+            results[ep] = {
+                "status": r.status_code,
+                "items_count": len(items) if isinstance(items, list) else str(items)[:100],
+                "keys": list(data.keys()),
+                "first_item": items[0] if isinstance(items, list) and items else None
+            }
+        except Exception as e:
+            results[ep] = {"error": str(e)}
+    return jsonify(results)
 
 @app.route("/hours", methods=["GET"])
 def get_hours():
-    """Returneaza orele lucrate per proiect din TrackingTime"""
+    """Returneaza orele lucrate per proiect"""
     try:
-        response = requests.get(
+        # Incearca endpoint-uri multiple
+        endpoints_to_try = [
             "https://app.trackingtime.co/api/v4/tasks",
-            headers=get_auth_header(),
-            timeout=10
-        )
+            "https://app.trackingtime.co/api/v4/projects",
+        ]
         
-        if not response.ok:
-            return jsonify({"error": f"TrackingTime API error: {response.status_code}"}), 500
+        projects_raw = []
+        for url in endpoints_to_try:
+            r = requests.get(url, headers=get_auth_header(), timeout=10)
+            if r.ok:
+                data = r.json()
+                items = data.get("data", [])
+                if isinstance(items, list) and items:
+                    projects_raw = items
+                    break
         
-        data = response.json()
-        projects_raw = data.get("data", [])
-        
-        # Construim un dict simplu: {project_name: hours}
         result = {}
         for p in projects_raw:
             name = (p.get("name") or p.get("title") or "").strip()
             hours = float(p.get("worked_hours") or 0)
-            if p.get("accumulated_time"):
+            if not hours and p.get("accumulated_time"):
                 hours = float(p["accumulated_time"]) / 3600
             if name:
                 result[name] = round(hours, 1)
@@ -62,10 +82,6 @@ def get_hours():
     
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
