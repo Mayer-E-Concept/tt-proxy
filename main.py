@@ -50,7 +50,23 @@ def tt_get(path, email, password, params=None):
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/hours", methods=["GET"])
+@app.route("/test_auth", methods=["GET"])
+def test_auth():
+    """Testeaza autentificarea pentru fiecare user"""
+    results = {}
+    for user in USERS:
+        if not user["password"]:
+            results[user["name"]] = "no password"
+            continue
+        d = tt_get("/api/v4/users", user["email"], user["password"])
+        if d and d.get("data"):
+            u = d["data"][0] if isinstance(d["data"], list) else d["data"]
+            results[user["name"]] = f"OK - {u.get('name')} {u.get('surname')} ({u.get('role')})"
+        else:
+            results[user["name"]] = "FAILED - wrong password or no access"
+    return jsonify(results)
+
+
 def get_hours():
     """Agregate ore per proiect (campul 'p') pentru toti userii"""
     result = {}
