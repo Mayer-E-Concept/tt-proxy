@@ -22,12 +22,12 @@ def get_auth_header(email, password):
 
 def fetch_all_events(email, password, date_from, date_to):
     all_events = []
-    page = 0
+    page = 1
     while True:
         r = requests.get(
             "https://app.trackingtime.co/api/v4/events",
             headers=get_auth_header(email, password),
-            params={"from": date_from, "to": date_to, "page": page, "per_page": 500},
+            params={"from": date_from, "to": date_to, "page": page},
             timeout=30
         )
         if not r.ok:
@@ -36,10 +36,10 @@ def fetch_all_events(email, password, date_from, date_to):
         if not items:
             break
         all_events.extend(items)
-        if len(items) < 500:
+        if len(items) < 50:  # TT default page size
             break
         page += 1
-        if page > 20:
+        if page > 50:
             break
     return all_events
 
