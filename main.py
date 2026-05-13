@@ -67,7 +67,7 @@ def get_hours():
         user_stats.append({"user": user["name"], "events": count})
 
     return jsonify({
-        "projects": {k: round(v, 1) for k, v in result.items()},
+        "projects": {k: round(v, 4) for k, v in result.items()},
         "count": len(result),
         "users": user_stats
     })
