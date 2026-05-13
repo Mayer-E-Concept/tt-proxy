@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Planner</title>
+<script src="https://unpkg.com/@azure/msal-browser@2.38.0/lib/msal-browser.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg0:#f5f6f8;--bg1:#fff;--bg2:#f0f1f4;
+  --t1:#1c1c1e;--t2:#636369;--t3:#aeaeb2;
+  --bd:rgba(0,0,0,.10);--bd2:rgba(0,0,0,.18);
+  --red:#d7263d;--blue:#1672d1;--green:#1d9e75;--orange:#d05c0a;
+  --r:8px;--rlg:12px;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg0);color:var(--t1);height:100vh;overflow:hidden;font-size:13px;display:flex;flex-direction:column}
+button{font-family:inherit;cursor:pointer}
+input{font-family:inherit}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px}
+
+/* Login overlay */
+#login-overlay{position:fixed;inset:0;background:var(--bg0);display:flex;align-items:center;justify-content:center;z-index:2000}
+#login-box{background:var(--bg1);border:1px solid var(--bd);border-radius:var(--rlg);padding:40px;width:400px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.12)}
+#login-box h2{font-size:20px;font-weight:700;margin-bottom:8px}
+#login-box p{font-size:13px;color:var(--t2);margin-bottom:28px;line-height:1.5}
+#btn-login{background:var(--blue);color:#fff;border:none;border-radius:var(--r);padding:12px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%}
+#btn-login:hover{opacity:.9}
+#login-error{font-size:12px;color:var(--red);margin-top:12px;display:none}
+
+/* Toolbar */
+#toolbar{background:var(--bg1);border-bottom:1px solid var(--bd);padding:0 16px;height:48px;display:flex;align-items:center;gap:10px;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+#toolbar .title{font-weight:700;font-size:14px;letter-spacing:-.01em}
+#toolbar .sep{width:1px;height:18px;background:var(--bd);margin:0 4px}
+#save-status{font-size:11px;color:var(--t3);display:flex;align-items:center;gap:4px}
+#search{height:28px;border-radius:var(--r);border:1px solid var(--bd);background:var(--bg2);color:var(--t1);padding:0 10px;font-size:12px;width:160px;outline:none}
+.spacer{flex:1}
+.zoom-lbl{font-size:11px;color:var(--t2)}
+.zbtn{width:28px;height:28px;border-radius:var(--r);border:1px solid var(--bd);background:var(--bg2);color:var(--t1);font-size:15px;line-height:1}
+#zoom-val{font-size:11px;color:var(--t2);min-width:36px;text-align:center}
+#btn-add-project{height:30px;padding:0 14px;border-radius:var(--r);border:none;background:var(--blue);color:#fff;font-size:12px;font-weight:700}
+#btn-overlaps{height:28px;padding:0 12px;border-radius:var(--r);border:1px solid var(--bd);background:var(--bg2);color:var(--t2);font-size:11px;transition:all .15s}
+#btn-overlaps.active{background:#fde8ec;color:var(--red);border-color:#f5c6cb}
+#user-btn{height:28px;padding:0 10px;border-radius:var(--r);border:1px solid var(--bd);background:var(--bg2);color:var(--t2);font-size:11px}
+
+/* Legend / filter buttons */
+#legend{background:var(--bg2);border-bottom:1px solid var(--bd);padding:4px 16px;display:flex;gap:8px;align-items:center;flex-shrink:0;overflow-x:auto;white-space:nowrap}
+#legend .hint{margin-left:auto;font-size:10px;color:var(--t3)}
+.filter-btn{height:24px;padding:0 10px;border-radius:20px;border:1px solid var(--bd);background:transparent;color:var(--t2);font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .15s;white-space:nowrap}
+.filter-btn:hover{border-color:var(--bd2);background:var(--bg1)}
+.filter-btn.active{background:var(--bg1);font-weight:600}
+
+/* Gantt */
+#gantt{flex:1;overflow:auto;position:relative}
+#gantt-inner{display:inline-flex;flex-direction:column;min-width:100%}
+#gantt-header{display:flex;position:sticky;top:0;z-index:20;height:54px;background:var(--bg1);border-bottom:1px solid var(--bd);flex-shrink:0;box-shadow:0 1px 0 var(--bd)}
+.left-header{width:290px;flex-shrink:0;position:sticky;left:0;z-index:30;background:var(--bg1);border-right:1px solid var(--bd);display:flex;align-items:center;padding:0 16px}
+.left-header span{font-size:10px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.1em}
+#timeline-header{flex-shrink:0;position:relative}
+.month-row{display:flex;height:55%;border-bottom:1px solid var(--bd)}
+.week-row{display:flex;height:45%;position:relative}
+.month-cell{flex-shrink:0;font-size:10px;font-weight:700;color:var(--t2);display:flex;align-items:center;padding-left:8px;border-right:1px solid var(--bd);letter-spacing:.06em}
+.week-cell{flex-shrink:0;font-size:9px;color:var(--t3);display:flex;align-items:center;padding-left:4px;border-right:1px solid var(--bd)}
+.gantt-row{display:flex;flex-shrink:0;border-bottom:1px solid var(--bd)}
+.gantt-row.even{background:var(--bg1)}
+.gantt-row.odd{background:var(--bg2)}
+.left-cell{width:290px;flex-shrink:0;position:sticky;left:0;z-index:10;border-right:1px solid var(--bd);display:flex;align-items:center;padding:0 6px 0 12px;gap:5px;height:42px}
+.left-cell.depth1{padding-left:36px}
+.toggle-btn{width:14px;font-size:9px;color:var(--t3);cursor:pointer;user-select:none;flex-shrink:0;background:none;border:none;padding:0}
+.color-dot{width:9px;height:9px;flex-shrink:0;border-radius:50%}
+.color-dot.project{border-radius:2px}
+.row-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row-name.project{font-weight:700;font-size:12.5px}
+.row-name.task{font-size:11.5px;color:var(--t2)}
+.status-icon{font-size:11px;flex-shrink:0}
+.add-task-btn{background:none;border:none;color:var(--t3);font-size:18px;line-height:1;padding:0 2px;flex-shrink:0}
+.timeline-cell{flex-shrink:0;position:relative;overflow:hidden;height:42px}
+.grid-line{position:absolute;top:0;bottom:0;width:1px;background:var(--bd);pointer-events:none}
+.today-line{position:absolute;top:0;bottom:0;width:2px;background:var(--red);opacity:.6;pointer-events:none;z-index:4}
+.today-head-line{position:absolute;top:0;bottom:0;width:2px;background:var(--red);z-index:5}
+.today-lbl{position:absolute;top:0;left:4px;font-size:9px;color:var(--red);white-space:nowrap}
+.bar{position:absolute;display:flex;align-items:center;overflow:hidden;cursor:pointer;transition:opacity .15s}
+.bar:hover{opacity:.95!important}
+.bar-progress{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.25);border-right:1px solid rgba(255,255,255,.35)}
+.bar-label{position:relative;z-index:1;font-size:10.5px;font-weight:700;color:rgba(255,255,255,.95);padding-left:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#gantt-footer{display:flex;height:44px;flex-shrink:0}
+.footer-left{width:290px;flex-shrink:0;position:sticky;left:0;z-index:10;background:var(--bg1);border-right:1px solid var(--bd);display:flex;align-items:center;justify-content:center;border-top:1px solid var(--bd)}
+.footer-left button{background:none;border:none;color:var(--blue);font-size:12px;font-weight:700;cursor:pointer}
+.footer-right{flex-shrink:0;border-top:1px solid var(--bd);background:var(--bg1)}
+
+/* Modal */
+#modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center}
+#modal-overlay.open{display:flex}
+#modal{background:var(--bg1);border:1px solid var(--bd);border-radius:var(--rlg);padding:28px;width:480px;max-width:95vw;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+.modal-header{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+.modal-color-dot{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+.modal-title{font-weight:700;font-size:15px;flex:1}
+.modal-days{font-size:11px;color:var(--t3)}
+.modal-close{background:none;border:none;font-size:18px;color:var(--t3);cursor:pointer;line-height:1}
+.field-group{margin-bottom:14px}
+.field-label{display:block;font-size:10px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px}
+.field-input{width:100%;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:7px 10px;color:var(--t1);font-size:13px;outline:none;font-family:inherit}
+.date-row{display:flex;gap:12px;margin-bottom:14px}
+.date-row>div{flex:1}
+.color-swatches{display:flex;gap:8px}
+.swatch{width:26px;height:26px;border-radius:5px;cursor:pointer;border:2.5px solid transparent;transition:border .1s}
+.swatch.active{border-color:var(--t1)}
+.status-buttons{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.status-btn{display:flex;align-items:center;gap:4px;padding:4px 10px;border-radius:var(--r);border:1px solid var(--bd);background:transparent;color:var(--t2);font-size:11.5px;cursor:pointer;font-family:inherit}
+.status-btn.active{background:var(--bg2)}
+.progress-bar-bg{height:5px;background:var(--bg2);border-radius:3px;margin-bottom:6px;overflow:hidden}
+.progress-bar-fill{height:100%;background:var(--blue);border-radius:3px}
+.modal-actions{display:flex;align-items:center;justify-content:space-between;margin-top:20px}
+.btn-delete{padding:8px 16px;border-radius:var(--r);border:1px solid #f5c6cb;background:#fde8ec;color:var(--red);font-size:12px;font-weight:700}
+.btn-cancel{padding:8px 16px;border-radius:var(--r);border:1px solid var(--bd);background:transparent;color:var(--t2);font-size:12px}
+.btn-save{padding:8px 18px;border-radius:var(--r);border:none;background:var(--blue);color:#fff;font-size:12px;font-weight:700}
+input[type=range]{width:100%;accent-color:var(--blue)}
+
+/* Loading screen */
+#loading-screen{position:fixed;inset:0;background:var(--bg0);display:none;align-items:center;justify-content:center;z-index:1500;flex-direction:column;gap:12px}
+#loading-screen.visible{display:flex}
+.spinner{width:32px;height:32px;border:3px solid var(--bd);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- ── Login overlay ── -->
+<div id="login-overlay">
+  <div id="login-box">
+    <div style="font-size:32px;margin-bottom:16px">📋</div>
+    <h2>Project Planner</h2>
+    <p>Conectează-te cu contul tău Microsoft pentru a accesa și sincroniza datele echipei.</p>
+    <button id="btn-login" onclick="login()">Conectează-te cu Microsoft</button>
+    <div id="login-error">Autentificarea a eșuat. Încearcă din nou.</div>
+  </div>
+</div>
+
+<!-- ── Loading screen ── -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <span style="font-size:13px;color:var(--t2)">Se încarcă datele...</span>
+</div>
+
+<!-- ── Toolbar ── -->
+<div id="toolbar">
+  <span class="title">📋 Project Planner</span>
+  <span class="sep"></span>
+  <div id="save-status">
+    <span id="save-icon">✓</span>
+    <span id="save-text">Salvat</span>
+  </div>
+  <input id="search" placeholder="Caută proiect…" oninput="render()">
+  <div class="spacer"></div>
+  <button id="btn-overlaps" onclick="toggleOverlaps()">⚠ Suprapuneri</button>
+  <button id="btn-tt-sync" onclick="syncTT()" style="height:28px;padding:0 12px;border-radius:var(--r);border:1px solid var(--bd);background:var(--bg2);color:var(--t2);font-size:11px;cursor:pointer;transition:all .15s">⏱ Sync TrackingTime</button>
+  <span class="zoom-lbl">Zoom</span>
+  <button class="zbtn" onclick="zoom(-3)">−</button>
+  <span id="zoom-val">22px/zi</span>
+  <button class="zbtn" onclick="zoom(3)">+</button>
+  <button id="btn-add-project" onclick="addProject()">+ Proiect nou</button>
+  <button id="user-btn" onclick="logout()" title="Deconectare">👤 <span id="user-name"></span></button>
+</div>
+
+<!-- ── Legend / Filters ── -->
+<div id="legend">
+  <button class="filter-btn active" data-status="all" onclick="setFilter('all')">Toate</button>
+  <button class="filter-btn" data-status="in-progress" onclick="setFilter('in-progress')" style="color:var(--green)">◑ In Progress</button>
+  <button class="filter-btn" data-status="delayed" onclick="setFilter('delayed')" style="color:var(--orange)">⊗ Delayed</button>
+  <button class="filter-btn" data-status="at-risk" onclick="setFilter('at-risk')" style="color:#b45309">⚠ At Risk</button>
+  <button class="filter-btn" data-status="problem" onclick="setFilter('problem')" style="color:var(--red)">! Problem</button>
+  <button class="filter-btn" data-status="cancelled" onclick="setFilter('cancelled')" style="color:var(--t3)">✕ Cancelled</button>
+  <button class="filter-btn" data-status="completed" onclick="setFilter('completed')" style="color:var(--green)">✓ Completed</button>
+  <span class="hint">Dublu-click pe bară pentru editare</span>
+</div>
+
+<!-- ── Gantt ── -->
+<div id="gantt">
+  <div id="gantt-inner">
+    <div id="gantt-header">
+      <div class="left-header"><span>Proiecte &amp; Taskuri</span></div>
+      <div id="timeline-header">
+        <div class="month-row" id="month-row"></div>
+        <div class="week-row" id="week-row"></div>
+      </div>
+    </div>
+    <div id="rows-container"></div>
+    <div id="gantt-footer">
+      <div class="footer-left"><button onclick="addProject()">+ Adaugă proiect</button></div>
+      <div class="footer-right" id="footer-right"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal ── -->
+<div id="modal-overlay" onclick="closeModal(event)">
+  <div id="modal">
+    <div class="modal-header">
+      <div class="modal-color-dot" id="m-color-dot"></div>
+      <span class="modal-title" id="m-title-lbl"></span>
+      <span class="modal-days" id="m-days"></span>
+      <button class="modal-close" onclick="hideModal()">×</button>
+    </div>
+    <div class="field-group">
+      <label class="field-label">Denumire</label>
+      <input class="field-input" id="m-name" oninput="syncModal()">
+    </div>
+    <div class="field-group">
+      <label class="field-label">Culoare</label>
+      <div class="color-swatches" id="m-colors"></div>
+    </div>
+    <div class="date-row">
+      <div>
+        <label class="field-label">Data start</label>
+        <input type="date" class="field-input" id="m-start" onchange="syncModal()">
+      </div>
+      <div>
+        <label class="field-label">Data final</label>
+        <input type="date" class="field-input" id="m-end" onchange="syncModal()">
+      </div>
+    </div>
+    <div class="field-group">
+      <label class="field-label">Status</label>
+      <div class="status-buttons" id="m-statuses"></div>
+    </div>
+    <div class="field-group">
+      <label class="field-label" id="m-prog-lbl">Progres — 0%</label>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="m-prog-fill"></div></div>
+      <input type="range" min="0" max="100" id="m-progress" oninput="syncModal()">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-delete" onclick="deleteItem()">Șterge</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-cancel" onclick="hideModal()">Anulează</button>
+        <button class="btn-save" onclick="saveItem()">Salvează</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════
+   CONFIGURARE — completează după înregistrare
+   ════════════════════════════════════════════ */
+const CONFIG = {
+  clientId:  '09e90cfd-f525-4a76-a8de-59a3348cb3c5',
+  tenantId:  'meconceptsrl.onmicrosoft.com',
+  siteHost:  'meconceptsrl.sharepoint.com',
+  sitePath:  '/sites/Coordonareproiecte',
+  listName:  'ProjectPlannerData',
+};
+/* ════════════════════════════════════════════ */
+
+/* ── MSAL ── */
+let msalInstance, currentAccount, cachedSiteId, cachedListId, listItemId;
+
+const SCOPES = ['https://graph.microsoft.com/Sites.ReadWrite.All'];
+
+async function initMsal() {
+  msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: CONFIG.clientId,
+      authority: `https://login.microsoftonline.com/${CONFIG.tenantId}`,
+      redirectUri: window.location.origin + window.location.pathname,
+      navigateToLoginRequestUrl: false,
+    },
+    cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: true },
+  });
+
+  // Handle redirect response first
+  try {
+    const result = await msalInstance.handleRedirectPromise();
+    if (result) {
+      currentAccount = result.account;
+    }
+  } catch (e) { console.error('Redirect error:', e); }
+
+  // Check existing session
+  if (!currentAccount) {
+    const accounts = msalInstance.getAllAccounts();
+    if (accounts.length > 0) currentAccount = accounts[0];
+  }
+
+  if (currentAccount) {
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('user-name').textContent = currentAccount.name?.split(' ')[0] || '';
+    showLoading(true);
+    await loadData();
+    showLoading(false);
+  }
+}
+
+function login() {
+  document.getElementById('login-error').style.display = 'none';
+  msalInstance.loginRedirect({ scopes: SCOPES });
+}
+
+function logout() {
+  if (confirm('Deconectare?')) msalInstance.logoutRedirect();
+}
+
+async function getToken() {
+  if (!currentAccount) return null;
+  try {
+    const r = await msalInstance.acquireTokenSilent({ scopes: SCOPES, account: currentAccount });
+    return r.accessToken;
+  } catch {
+    try {
+      msalInstance.acquireTokenRedirect({ scopes: SCOPES });
+    } catch { return null; }
+  }
+}
+
+/* ── Graph API ── */
+async function graph(method, path, body) {
+  const token = await getToken();
+  if (!token) return null;
+  const res = await fetch('https://graph.microsoft.com/v1.0' + path, {
+    method,
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 204) return {};
+  return res.ok ? res.json() : null;
+}
+
+async function getSiteId() {
+  if (cachedSiteId) return cachedSiteId;
+  const data = await graph('GET', `/sites/${CONFIG.siteHost}:${CONFIG.sitePath}`);
+  cachedSiteId = data?.id;
+  return cachedSiteId;
+}
+
+async function getOrCreateList(siteId) {
+  if (cachedListId) return cachedListId;
+  const lists = await graph('GET', `/sites/${siteId}/lists?$filter=displayName eq '${CONFIG.listName}'&$select=id`);
+  if (lists?.value?.length > 0) {
+    cachedListId = lists.value[0].id;
+    return cachedListId;
+  }
+  setStatus('error', 'Lista lipsă — creează "ProjectPlannerData" în SharePoint');
+  return null;
+}
+
+/* ── Data load / save ── */
+async function loadData() {
+  try {
+    const siteId = await getSiteId();
+    if (!siteId) { setStatus('error', 'Eroare site'); return; }
+
+    const listId = await getOrCreateList(siteId);
+    if (!listId) { setStatus('error', 'Eroare listă'); return; }
+
+    const items = await graph('GET', `/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=5&$select=id,fields`);
+    if (items?.value?.length > 0) {
+      const item = items.value[0];
+      listItemId = item.id;
+      try {
+        const parsed = JSON.parse(item.fields.JsonData || '[]');
+        if (Array.isArray(parsed) && parsed.length > 0) projects = parsed;
+      } catch { /* use defaults */ }
+    }
+    setStatus('ok', 'Salvat');
+    render();
+  } catch (e) {
+    setStatus('error', 'Eroare conexiune');
+    render();
+  }
+}
+
+let saveTimer = null;
+function queueSave() {
+  setStatus('pending', 'Se salvează...');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(doSave, 1200);
+}
+
+async function doSave() {
+  try {
+    const siteId = await getSiteId();
+    const listId = await getOrCreateList(siteId);
+    const json = JSON.stringify(projects);
+
+    if (listItemId) {
+      await graph('PATCH', `/sites/${siteId}/lists/${listId}/items/${listItemId}/fields`, { JsonData: json });
+    } else {
+      const item = await graph('POST', `/sites/${siteId}/lists/${listId}/items`, {
+        fields: { Title: 'state', JsonData: json },
+      });
+      listItemId = item?.id;
+    }
+    setStatus('ok', 'Salvat');
+  } catch {
+    setStatus('error', 'Eroare salvare');
+  }
+}
+
+function setStatus(type, text) {
+  const icon = document.getElementById('save-icon');
+  const lbl = document.getElementById('save-text');
+  const colors = { ok: 'var(--green)', pending: 'var(--t3)', error: 'var(--red)' };
+  const icons = { ok: '✓', pending: '⟳', error: '✕' };
+  icon.textContent = icons[type] || '–';
+  lbl.textContent = text;
+  document.getElementById('save-status').style.color = colors[type] || 'var(--t3)';
+}
+
+function showLoading(v) {
+  document.getElementById('loading-screen').classList.toggle('visible', v);
+}
+
+/* ── Gantt config ── */
+const VIEW_START = '2026-05-01';
+let PPD = 22;
+let showOverlaps = false;
+
+const STATUSES = {
+  none:          { label:'None',        icon:'–',  color:'var(--t3)' },
+  'in-progress': { label:'In Progress', icon:'◑',  color:'var(--green)' },
+  delayed:       { label:'Delayed',     icon:'⊗',  color:'var(--orange)' },
+  'at-risk':     { label:'At Risk',     icon:'⚠',  color:'#b45309' },
+  problem:       { label:'Problem',     icon:'!',  color:'var(--red)' },
+  cancelled:     { label:'Cancelled',   icon:'✕',  color:'var(--t3)' },
+  completed:     { label:'Completed',   icon:'✓',  color:'var(--green)' },
+};
+const PALETTE = ['#e24b4a','#378add','#1d9e75','#7f77dd','#ba7517','#0f6e56','#d85a30','#d4537e'];
+const TCOLORS = ['#5dcaa5','#85b7eb','#97c459','#afa9ec','#ef9f27','#1d9e75','#d85a30','#ed93b1'];
+
+let _id = 1, activeFilter = 'all';
+const uid = () => 'r' + (_id++);
+
+const STATUS_COLORS = { all:'var(--t1)', 'in-progress':'var(--green)', delayed:'var(--orange)', 'at-risk':'#b45309', problem:'var(--red)', cancelled:'var(--t3)', completed:'var(--green)' };
+
+function setFilter(status) {
+  activeFilter = status;
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    const isActive = b.dataset.status === status;
+    b.classList.toggle('active', isActive);
+    b.style.fontWeight = isActive ? '700' : '400';
+    b.style.borderColor = isActive ? (STATUS_COLORS[b.dataset.status] || 'var(--bd2)') : 'var(--bd)';
+    b.style.background = isActive ? 'var(--bg1)' : 'transparent';
+  });
+  render();
+}
+function d2ms(s) { return new Date(s + 'T00:00:00').getTime(); }
+function diff(a, b) { return Math.round((d2ms(b) - d2ms(a)) / 86400000); }
+function addD(s, n) { const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().split('T')[0]; }
+function todayStr() { return new Date().toISOString().split('T')[0]; }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+/* ── Default projects ── */
+let projects = [
+  {id:'p1',name:'Casinostraße 63',color:'#e24b4a',collapsed:false,start:'2026-05-20',end:'2026-05-27',status:'none',progress:0,tasks:[]},
+  {id:'p2',name:'Casinostraße 65',color:'#e24b4a',collapsed:false,start:'2026-06-01',end:'2026-09-15',status:'in-progress',progress:20,tasks:[
+    {id:'p2a',name:'Entwurfsplanung Casinostraße 65',color:'#1d9e75',start:'2026-06-01',end:'2026-07-15',status:'in-progress',progress:30},
+    {id:'p2b',name:'Ausführungsplanung Casinostraße 65',color:'#378add',start:'2026-06-15',end:'2026-08-30',status:'none',progress:0},
+  ]},
+  {id:'p3',name:'2605_27 HKL Hanseatischer Hof Lübeck',color:'#0f6e56',collapsed:false,start:'2026-05-25',end:'2026-07-20',status:'none',progress:0,tasks:[]},
+  {id:'p4',name:'2601_17 PLS_24_23 Hamburg',color:'#ba7517',collapsed:false,start:'2026-06-01',end:'2026-08-15',status:'none',progress:0,tasks:[]},
+  {id:'p5',name:'2603_25 P238 Schwansee',color:'#7f77dd',collapsed:false,start:'2026-05-15',end:'2026-06-25',status:'none',progress:0,tasks:[
+    {id:'p5a',name:'2601_18 AP 140 DH',color:'#378add',start:'2026-06-01',end:'2026-07-10',status:'none',progress:0},
+  ]},
+  {id:'p6',name:'2602_22 PLS Hofmannhöfe',color:'#e24b4a',collapsed:false,start:'2026-07-01',end:'2026-09-30',status:'none',progress:0,tasks:[]},
+  {id:'p7',name:'2599_02 AP 133 HDO',color:'#ba7517',collapsed:false,start:'2026-06-01',end:'2026-08-20',status:'none',progress:0,tasks:[]},
+];
+
+/* ── Helpers ── */
+function calcTotalDays() {
+  if (!projects.length) return 184;
+  const maxMs = projects.reduce((max, p) => {
+    const pEnd = d2ms(p.end);
+    const tEnd = p.tasks.reduce((m, t) => Math.max(m, d2ms(t.end)), pEnd);
+    return Math.max(max, tEnd);
+  }, d2ms(addD(VIEW_START, 184)));
+  return Math.max(184, diff(VIEW_START, new Date(maxMs).toISOString().split('T')[0]) + 30);
+}
+
+function getMonths(totalDays) {
+  const out = []; let d = new Date(VIEW_START + 'T00:00:00'), off = 0;
+  while (off < totalDays) {
+    const m = d.getMonth(), y = d.getFullYear();
+    const next = new Date(y, m + 1, 1);
+    const days = Math.min(Math.round((next - d) / 86400000), totalDays - off);
+    out.push({ label: d.toLocaleString('ro-RO', {month:'short'}).toUpperCase() + ' ' + y, off, days });
+    off += days; d = next;
+  }
+  return out;
+}
+
+
+function flatRows(search) {
+  const q = search.toLowerCase();
+  const rows = [];
+  for (const p of projects) {
+    const matchSearch = !q || p.name.toLowerCase().includes(q) || p.tasks.some(t => t.name.toLowerCase().includes(q));
+    if (!matchSearch) continue;
+    const matchFilter = activeFilter === 'all' || p.status === activeFilter || p.tasks.some(t => t.status === activeFilter);
+    if (!matchFilter) continue;
+    rows.push({ ...p, isProject: true, depth: 0 });
+    if (!p.collapsed) for (const t of p.tasks) {
+      if (q && !t.name.toLowerCase().includes(q) && !p.name.toLowerCase().includes(q)) continue;
+      if (activeFilter !== 'all' && t.status !== activeFilter && p.status !== activeFilter) continue;
+      rows.push({ ...t, isProject: false, depth: 1, projectId: p.id });
+    }
+  }
+  return rows;
+}
+
+function getOverlaps() {
+  const s = new Set();
+  for (let i = 0; i < projects.length; i++)
+    for (let j = i + 1; j < projects.length; j++) {
+      const a = projects[i], b = projects[j];
+      if (d2ms(a.start) < d2ms(b.end) && d2ms(b.start) < d2ms(a.end)) { s.add(a.id); s.add(b.id); }
+    }
+  return s;
+}
+
+/* ── Render ── */
+function render() {
+  const search = document.getElementById('search').value;
+  const rows = flatRows(search);
+  const overlaps = showOverlaps ? getOverlaps() : new Set();
+  const totalDays = calcTotalDays();
+  const MONTHS = getMonths(totalDays);
+  const totalW = totalDays * PPD;
+  const todayX = diff(VIEW_START, todayStr()) * PPD;
+
+  document.getElementById('zoom-val').textContent = PPD + 'px/zi';
+  document.getElementById('timeline-header').style.width = totalW + 'px';
+
+  document.getElementById('month-row').innerHTML = MONTHS.map(m =>
+    `<div class="month-cell" style="width:${m.days * PPD}px">${m.label}</div>`
+  ).join('');
+
+  document.getElementById('week-row').innerHTML =
+    Array.from({length: Math.ceil(totalDays / 7)}, (_, i) =>
+      `<div class="week-cell" style="width:${7 * PPD}px">${PPD >= 14 ? 'S' + (i + 19) : ''}</div>`
+    ).join('') +
+    (todayX >= 0 && todayX <= totalW
+      ? `<div class="today-head-line" style="left:${todayX}px"><span class="today-lbl">azi</span></div>` : '');
+
+  document.getElementById('footer-right').style.width = totalW + 'px';
+
+  document.getElementById('rows-container').innerHTML = rows.map((row, i) => {
+    const x = diff(VIEW_START, row.start) * PPD;
+    const w = Math.max(diff(row.start, row.end) * PPD, 6);
+    const isOvlp = row.isProject && overlaps.has(row.id);
+    const st = STATUSES[row.status] || STATUSES.none;
+    const bg = i % 2 === 0 ? 'even' : 'odd';
+    const cellBg = i % 2 === 0 ? 'var(--bg1)' : 'var(--bg2)';
+    const barVisible = x < totalW && x + w > 0;
+
+    const ttH = row.isProject ? getTTHours(row.name, row.ttLink) : null;
+    const ttLabel = ttH ? ` · ⏱ ${fmtHours(ttH)}` : '';
+
+    const gridLines = MONTHS.map(m => `<div class="grid-line" style="left:${m.off * PPD}px"></div>`).join('');
+    const todayLine = todayX >= 0 && todayX <= totalW ? `<div class="today-line" style="left:${todayX}px"></div>` : '';
+    const bar = barVisible ? `
+      <div class="bar" style="left:${Math.max(0,x)}px;width:${w}px;top:${42*.18}px;height:${42*.64}px;
+        background:${row.color};border-radius:${row.isProject?5:4}px;
+        opacity:${row.status==='cancelled'?.35:.82};outline:${isOvlp?'2px solid var(--red)':'none'}"
+        ondblclick="openModal('${row.id}','${row.isProject?'':row.projectId}')"
+        title="${row.name} · ${row.start} → ${row.end} · ${diff(row.start,row.end)} zile${ttLabel}">
+        ${row.progress > 0 ? `<div class="bar-progress" style="width:${row.progress}%"></div>` : ''}
+        ${w > 60 ? `<span class="bar-label">${row.name}${ttLabel}</span>` : ''}
+      </div>` : '';
+
+    const toggle = row.isProject
+      ? (row.tasks && row.tasks.length > 0
+          ? `<button class="toggle-btn" onclick="toggleCollapse('${row.id}')">${row.collapsed?'▶':'▼'}</button>`
+          : `<span style="width:14px;flex-shrink:0"></span>`)
+      : `<span style="width:14px;flex-shrink:0"></span>`;
+    const addBtn = row.isProject
+      ? `<button class="add-task-btn" onclick="addTask('${row.id}')" title="Adaugă task">+</button>` : '';
+
+    return `<div class="gantt-row ${bg}">
+      <div class="left-cell${row.depth===1?' depth1':''}" style="background:${cellBg}">
+        ${toggle}
+        <div class="color-dot${row.isProject?' project':''}" style="background:${row.color}"></div>
+        <span class="row-name ${row.isProject?'project':'task'}">${isOvlp?'<span style="color:var(--red);margin-right:4px">⚠</span>':''}${row.name}</span>
+        <span class="status-icon" style="color:${st.color}">${st.icon}</span>
+
+        ${addBtn}
+      </div>
+      <div class="timeline-cell" style="width:${totalW}px">${gridLines}${todayLine}${bar}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ── Actions ── */
+function zoom(d) { PPD = clamp(PPD + d, 8, 50); render(); }
+function toggleOverlaps() {
+  showOverlaps = !showOverlaps;
+  document.getElementById('btn-overlaps').classList.toggle('active', showOverlaps);
+  render();
+}
+function toggleCollapse(id) {
+  const p = projects.find(x => x.id === id);
+  if (p) { p.collapsed = !p.collapsed; render(); }
+}
+function uniqueName(name, excludeId) {
+  const base = name.replace(/ \(\d+\)$/, '');
+  const taken = projects.filter(p => p.id !== excludeId && (p.name === base || p.name.match(new RegExp('^' + base.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ' \\(\\d+\\)$'))));
+  if (taken.length === 0) return base;
+  let n = 2;
+  while (projects.some(p => p.id !== excludeId && p.name === base + ' (' + n + ')')) n++;
+  return base + ' (' + n + ')';
+}
+
+function addProject() {
+  const t = todayStr();
+  const name = uniqueName('Proiect nou', null);
+  projects.push({id:uid(),name,color:PALETTE[projects.length%PALETTE.length],
+    collapsed:false,start:t,end:addD(t,30),status:'none',progress:0,tasks:[]});
+  render(); queueSave();
+}
+function addTask(projId) {
+  const p = projects.find(x => x.id === projId);
+  if (!p) return;
+  p.collapsed = false;
+  p.tasks.push({id:uid(),name:'Task nou',color:TCOLORS[p.tasks.length%TCOLORS.length],
+    start:todayStr(),end:addD(todayStr(),14),status:'none',progress:0});
+  render(); queueSave();
+}
+
+/* ── Modal ── */
+let modalRow = null;
+function openModal(itemId, projectId) {
+  let row = null;
+  if (!projectId) {
+    const p = projects.find(x => x.id === itemId);
+    if (p) row = { ...p, isProject: true };
+  } else {
+    const p = projects.find(x => x.id === projectId);
+    if (p) { const t = p.tasks.find(x => x.id === itemId); if (t) row = { ...t, isProject: false, projectId }; }
+  }
+  if (!row) return;
+  modalRow = row;
+  document.getElementById('m-title-lbl').textContent = row.isProject ? 'Editare proiect' : 'Editare task';
+  document.getElementById('m-name').value = row.name;
+  document.getElementById('m-start').value = row.start;
+  document.getElementById('m-end').value = row.end;
+  document.getElementById('m-progress').value = row.progress;
+  document.getElementById('m-colors').innerHTML = PALETTE.map(c =>
+    `<div class="swatch${c===row.color?' active':''}" style="background:${c}" onclick="pickColor('${c}')"></div>`
+  ).join('');
+  document.getElementById('m-statuses').innerHTML = Object.entries(STATUSES).map(([k,v]) =>
+    `<button class="status-btn${row.status===k?' active':''}"
+      style="color:${v.color};border-color:${row.status===k?v.color:'var(--bd)'};background:${row.status===k?'var(--bg2)':'transparent'}"
+      onclick="pickStatus('${k}')">${v.icon} ${v.label}</button>`
+  ).join('');
+
+  // TT dropdown — only for projects
+  syncModal();
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function syncModal() {
+  const start = document.getElementById('m-start').value;
+  const end = document.getElementById('m-end').value;
+  const progress = +document.getElementById('m-progress').value;
+  document.getElementById('m-days').textContent = (start&&end?Math.max(0,diff(start,end)):0) + ' zile';
+  document.getElementById('m-prog-lbl').textContent = `Progres — ${progress}%`;
+  document.getElementById('m-prog-fill').style.width = progress + '%';
+  const as = document.querySelector('.swatch.active');
+  if (as) document.getElementById('m-color-dot').style.background = as.style.background;
+}
+function pickColor(color) {
+  document.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', s.style.background===color||s.style.backgroundColor===color));
+  document.getElementById('m-color-dot').style.background = color;
+  if (modalRow) modalRow.color = color;
+}
+function pickStatus(key) {
+  if (modalRow) modalRow.status = key;
+  document.getElementById('m-statuses').innerHTML = Object.entries(STATUSES).map(([k,v]) =>
+    `<button class="status-btn${k===key?' active':''}"
+      style="color:${v.color};border-color:${k===key?v.color:'var(--bd)'};background:${k===key?'var(--bg2)':'transparent'}"
+      onclick="pickStatus('${k}')">${v.icon} ${v.label}</button>`
+  ).join('');
+}
+function saveItem() {
+  if (!modalRow) return;
+  let name = document.getElementById('m-name').value.trim() || 'Fără nume';
+  const start = document.getElementById('m-start').value;
+  const end = document.getElementById('m-end').value;
+  const progress = +document.getElementById('m-progress').value;
+  const as = document.querySelector('.swatch.active');
+  const color = as ? (as.style.backgroundColor || as.style.background) : modalRow.color;
+
+  // Auto-rename if duplicate
+  if (modalRow.isProject) {
+    const newName = uniqueName(name, modalRow.id);
+    if (newName !== name) {
+      if (!confirm(`Există deja un proiect cu numele "${name}".\nSalvez ca "${newName}"?`)) return;
+      name = newName;
+    }
+  }
+
+  if (modalRow.isProject) {
+    const p = projects.find(x => x.id === modalRow.id);
+    if (p) Object.assign(p, { name, start, end, progress, status: modalRow.status, color });
+  } else {
+    const p = projects.find(x => x.id === modalRow.projectId);
+    if (p) { const t = p.tasks.find(x => x.id === modalRow.id); if (t) Object.assign(t, { name, start, end, progress, status: modalRow.status, color }); }
+  }
+  hideModal(); render(); queueSave();
+}
+function deleteItem() {
+  if (!modalRow) return;
+  if (modalRow.isProject) projects = projects.filter(p => p.id !== modalRow.id);
+  else { const p = projects.find(x => x.id === modalRow.projectId); if (p) p.tasks = p.tasks.filter(t => t.id !== modalRow.id); }
+  hideModal(); render(); queueSave();
+}
+function hideModal() { document.getElementById('modal-overlay').classList.remove('open'); modalRow = null; }
+function closeModal(e) { if (e.target === document.getElementById('modal-overlay')) hideModal(); }
+
+/* ── TrackingTime Sync ── */
+const TT_PROXY = 'https://web-production-67b9b.up.railway.app';
+let ttHours = {};
+let ttProjectList = [];
+
+function fmtHours(h) {
+  if (!h || h === 0) return '';
+  const hrs = Math.floor(h);
+  const mins = Math.round((h - hrs) * 60);
+  if (hrs === 0) return `${mins}min`;
+  if (mins === 0) return `${hrs}h`;
+  return `${hrs}h ${mins}min`;
+}
+
+async function syncTT() {
+  const btn = document.getElementById('btn-tt-sync');
+  btn.textContent = '⏱ Se sincronizează...';
+  btn.style.color = 'var(--blue)';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`${TT_PROXY}/hours`);
+    const data = await resp.json();
+    ttHours = {};
+    ttProjectList = [];
+    for (const [name, hours] of Object.entries(data.projects || {})) {
+      ttHours[name.toLowerCase()] = hours;
+      ttProjectList.push({ name: name.toLowerCase(), displayName: name, hours });
+    }
+    ttProjectList.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    const count = Object.keys(ttHours).length;
+    btn.textContent = `⏱ TT (${count})`;
+    btn.style.color = 'var(--green)';
+    btn.style.borderColor = 'var(--green)';
+    render();
+  } catch(e) {
+    btn.textContent = '⏱ Eroare sync';
+    btn.style.color = 'var(--red)';
+  }
+  btn.disabled = false;
+}
+
+function getTTHours(projectName, ttLink) {
+  if (ttLink && ttHours[ttLink] !== undefined) return ttHours[ttLink];
+  if (!projectName || !Object.keys(ttHours).length) return null;
+  const name = projectName.toLowerCase();
+  if (ttHours[name] !== undefined) return ttHours[name];
+  for (const [k, v] of Object.entries(ttHours)) {
+    const parts = name.split(/[\s_\-]+/);
+    if (parts.some(p => p.length > 3 && k.includes(p))) return v;
+    if (k.split(/[\s_\-]+/).some(p => p.length > 3 && name.includes(p))) return v;
+  }
+  return null;
+}
+
+/* ── Init ── */
+render();
+initMsal().catch(console.error);
+</script>
