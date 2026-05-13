@@ -68,7 +68,28 @@ def fetch_events(email, password, date_from=None, date_to=None):
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/hours", methods=["GET"])
+@app.route("/debug_vadim", methods=["GET"])
+def debug_vadim():
+    user = USERS[4]  # Vadim
+    r = requests.get(
+        "https://app.trackingtime.co/api/v4/events",
+        headers=get_auth_header(user["email"], user["password"]),
+        timeout=15
+    )
+    if not r.ok:
+        return jsonify({"error": r.status_code})
+    items = r.json().get("data", [])
+    return jsonify({
+        "count": len(items),
+        "total_hours": round(sum(float(e.get("d", 0)) for e in items) / 3600, 2),
+        "by_project": {
+            name: round(sum(float(e.get("d", 0)) for e in items if (e.get("p") or "") == name) / 3600, 2)
+            for name in set(e.get("p", "") for e in items)
+        },
+        "events_summary": [{"project": e.get("p"), "date": e.get("s", "")[:10], "hours": round(float(e.get("d", 0))/3600, 2)} for e in items]
+    })
+
+
 def get_hours():
     """Sync standard - ultimele 12 luni"""
     date_from = "2025-01-01"
