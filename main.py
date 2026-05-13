@@ -7,79 +7,81 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-TT_EMAIL = os.environ.get("TT_EMAIL", "m.poenar@me-concept.de")
-TT_PASSWORD = os.environ.get("TT_PASSWORD", "")
-ACCOUNT_ID = 657481  # Din raspunsul API
+# Credentiale per user - adauga toti membrii echipei
+USERS = [
+    {
+        "name": "Marius Poenar",
+        "email": os.environ.get("TT_EMAIL", "m.poenar@me-concept.de"),
+        "password": os.environ.get("TT_PASSWORD", "")
+    },
+    {
+        "name": "Ioan Chindea",
+        "email": os.environ.get("TT_EMAIL_2", "i.chindea@me-concept.de"),
+        "password": os.environ.get("TT_PASSWORD_2", "")
+    },
+]
 
-def get_auth_header():
-    credentials = f"{TT_EMAIL}:{TT_PASSWORD}"
+def get_auth_header(email, password):
+    credentials = f"{email}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
-def tt_get(path, params=None):
+def tt_get(path, email, password, params=None):
     r = requests.get(
         f"https://app.trackingtime.co{path}",
-        headers=get_auth_header(),
+        headers=get_auth_header(email, password),
         params=params,
         timeout=15
     )
-    return {"status": r.status_code, "data": r.json() if r.ok else r.text[:200]}
+    if r.ok:
+        return r.json()
+    return None
 
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/debug", methods=["GET"])
-def debug():
-    results = {}
-    
-    # Testeaza cu account_id corect (657481)
-    paths = [
-        f"/api/v4/accounts/{ACCOUNT_ID}/users",
-        f"/api/v4/accounts/{ACCOUNT_ID}/projects",
-        f"/api/v4/accounts/{ACCOUNT_ID}/tasks",
-        f"/api/v4/accounts/{ACCOUNT_ID}/events",
-        "/api/v4/reports/time",
-        "/api/v4/reports",
-        "/api/v4/projects?include_archived=true",
-        "/api/v4/projects?all=true",
-    ]
-    
-    for path in paths:
-        d = tt_get(path)
-        if d["status"] == 200:
-            data = d["data"]
-            items = data.get("data", [])
-            results[path] = {
-                "ok": True,
-                "count": len(items) if isinstance(items, list) else "N/A",
-                "keys": list(data.keys()) if isinstance(data, dict) else [],
-                "sample": items[0] if isinstance(items, list) and items else None
-            }
-        else:
-            results[path] = {"ok": False, "status": d["status"]}
-    
-    return jsonify(results)
-
 @app.route("/hours", methods=["GET"])
 def get_hours():
+    """Agregate ore per proiect pentru toti userii"""
     result = {}
-    d = tt_get("/api/v4/events")
-    if d["status"] == 200:
-        for evt in d["data"].get("data", []):
-            name = (evt.get("c") or evt.get("p") or "").strip()
-            secs = float(evt.get("d") or 0)
-            if name and secs > 0:
-                result[name] = result.get(name, 0) + secs / 3600
-    if not result:
-        d = tt_get("/api/v4/projects")
-        if d["status"] == 200:
-            for p in d["data"].get("data", []):
-                name = (p.get("name") or "").strip()
-                hours = float(p.get("worked_hours") or 0)
-                if name:
-                    result[name] = hours
-    return jsonify({"projects": {k: round(v, 1) for k, v in result.items()}, "count": len(result)})
+    user_stats = []
+
+    for user in USERS:
+        if not user["password"]:
+            continue
+
+        count = 0
+        # Events pentru userul curent
+        d = tt_get("/api/v4/events", user["email"], user["password"])
+        if d:
+            for evt in d.get("data", []):
+                name = (evt.get("c") or evt.get("p") or "").strip()
+                secs = float(evt.get("d") or 0)
+                if name and secs > 0:
+                    result[name] = result.get(name, 0) + secs / 3600
+                    count += 1
+
+        # Fallback: projects cu worked_hours
+        if count == 0:
+            d = tt_get("/api/v4/projects", user["email"], user["password"])
+            if d:
+                for p in d.get("data", []):
+                    name = (p.get("name") or "").strip()
+                    hours = float(p.get("worked_hours") or 0)
+                    if not hours and p.get("accumulated_time"):
+                        hours = float(p["accumulated_time"]) / 3600
+                    if name and hours > 0:
+                        result[name] = result.get(name, 0) + hours
+                        count += 1
+
+        user_stats.append({"user": user["name"], "events": count})
+
+    return jsonify({
+        "projects": {k: round(v, 1) for k, v in result.items()},
+        "count": len(result),
+        "users": user_stats
+    })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
