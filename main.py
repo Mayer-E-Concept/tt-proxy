@@ -1,8 +1,9 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
 import base64
 import os
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 CORS(app)
@@ -19,46 +20,51 @@ def get_auth_header(email, password):
     encoded = base64.b64encode(f"{email}:{password}".encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
-def tt_get(path, email, password, params=None):
-    r = requests.get(
-        f"https://app.trackingtime.co{path}",
-        headers=get_auth_header(email, password),
-        params=params,
-        timeout=15
-    )
-    if r.ok:
-        return r.json()
-    return None
+def fetch_all_events(email, password, date_from, date_to):
+    all_events = []
+    page = 0
+    while True:
+        r = requests.get(
+            "https://app.trackingtime.co/api/v4/events",
+            headers=get_auth_header(email, password),
+            params={"from": date_from, "to": date_to, "page": page, "per_page": 500},
+            timeout=30
+        )
+        if not r.ok:
+            break
+        items = r.json().get("data", [])
+        if not items:
+            break
+        all_events.extend(items)
+        if len(items) < 500:
+            break
+        page += 1
+        if page > 20:
+            break
+    return all_events
 
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"})
-
-@app.route("/hours", methods=["GET"])
-def get_hours():
+def aggregate_hours(date_from, date_to):
     result = {}
     user_stats = []
-
     for user in USERS:
         if not user["password"]:
             continue
         count = 0
-
-        # Campul "p" = project name in TrackingTime
-        d = tt_get("/api/v4/events", user["email"], user["password"])
-        if d:
-            for evt in d.get("data", []):
-                name = (evt.get("p") or evt.get("c") or "").strip()
-                secs = float(evt.get("d") or 0)
-                if name and secs > 0:
-                    result[name] = result.get(name, 0) + secs / 3600
-                    count += 1
-
-        # Fallback: projects cu worked_hours
+        events = fetch_all_events(user["email"], user["password"], date_from, date_to)
+        for evt in events:
+            name = (evt.get("p") or evt.get("c") or "").strip()
+            secs = float(evt.get("d") or 0)
+            if name and secs > 0:
+                result[name] = result.get(name, 0) + secs / 3600
+                count += 1
         if count == 0:
-            d = tt_get("/api/v4/projects", user["email"], user["password"])
-            if d:
-                for p in d.get("data", []):
+            r = requests.get(
+                "https://app.trackingtime.co/api/v4/projects",
+                headers=get_auth_header(user["email"], user["password"]),
+                timeout=15
+            )
+            if r.ok:
+                for p in r.json().get("data", []):
                     name = (p.get("name") or "").strip()
                     hours = float(p.get("worked_hours") or 0)
                     if not hours and p.get("accumulated_time"):
@@ -66,13 +72,37 @@ def get_hours():
                     if name and hours > 0:
                         result[name] = result.get(name, 0) + hours
                         count += 1
-
         user_stats.append({"user": user["name"], "events": count})
+    return result, user_stats
 
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+@app.route("/hours", methods=["GET"])
+def get_hours():
+    """Sync standard - ultimele 12 luni (rapid)"""
+    date_from = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+    date_to = datetime.now().strftime("%Y-%m-%d")
+    result, user_stats = aggregate_hours(date_from, date_to)
     return jsonify({
         "projects": {k: round(v, 4) for k, v in result.items()},
         "count": len(result),
-        "users": user_stats
+        "users": user_stats,
+        "range": f"{date_from} → {date_to}"
+    })
+
+@app.route("/hours/alltime", methods=["GET"])
+def get_hours_alltime():
+    """Sync complet - din 2020 pana azi (mai lent, pentru istoric complet)"""
+    date_from = "2020-01-01"
+    date_to = datetime.now().strftime("%Y-%m-%d")
+    result, user_stats = aggregate_hours(date_from, date_to)
+    return jsonify({
+        "projects": {k: round(v, 4) for k, v in result.items()},
+        "count": len(result),
+        "users": user_stats,
+        "range": f"{date_from} → {date_to}"
     })
 
 if __name__ == "__main__":
