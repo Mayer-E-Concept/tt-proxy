@@ -1,9 +1,9 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from flask_cors import CORS
 import requests
 import base64
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -20,43 +20,83 @@ def get_auth_header(email, password):
     encoded = base64.b64encode(f"{email}:{password}".encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
-def fetch_all_events(email, password, date_from, date_to):
+def fetch_events(email, password, date_from=None, date_to=None):
+    """Preia events cu paginare corecta (page incepe de la 0)"""
     all_events = []
-    page = 1
+    page = 0
+    today = datetime.now().strftime("%Y-%m-%d")
+    
     while True:
+        params = {"page": page}
+        if date_from:
+            params["from"] = date_from
+        if date_to:
+            params["to"] = date_to or today
+            
         r = requests.get(
             "https://app.trackingtime.co/api/v4/events",
             headers=get_auth_header(email, password),
-            params={"from": date_from, "to": date_to, "page": page},
+            params=params,
             timeout=30
         )
         if not r.ok:
             break
+        
         items = r.json().get("data", [])
         if not items:
             break
-        all_events.extend(items)
-        if len(items) < 50:  # TT default page size
+        
+        # Evita duplicatele verificand ID-ul
+        existing_ids = {e.get("id") for e in all_events}
+        new_items = [i for i in items if i.get("id") not in existing_ids]
+        if not new_items:
             break
+            
+        all_events.extend(new_items)
+        
+        # Daca pagina curenta are mai putine decat precedenta, am terminat
+        if len(items) < 10:
+            break
+            
         page += 1
-        if page > 50:
+        if page > 30:
             break
+    
     return all_events
 
-def aggregate_hours(date_from, date_to):
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+@app.route("/hours", methods=["GET"])
+def get_hours():
+    """Sync standard - ultimele 12 luni"""
+    date_from = "2025-01-01"
+    date_to = datetime.now().strftime("%Y-%m-%d")
+    return _get_hours(date_from, date_to)
+
+@app.route("/hours/alltime", methods=["GET"])
+def get_hours_alltime():
+    """Sync complet - din 2020"""
+    return _get_hours("2020-01-01", datetime.now().strftime("%Y-%m-%d"))
+
+def _get_hours(date_from, date_to):
     result = {}
     user_stats = []
+
     for user in USERS:
         if not user["password"]:
             continue
         count = 0
-        events = fetch_all_events(user["email"], user["password"], date_from, date_to)
+        
+        events = fetch_events(user["email"], user["password"], date_from, date_to)
         for evt in events:
             name = (evt.get("p") or evt.get("c") or "").strip()
             secs = float(evt.get("d") or 0)
             if name and secs > 0:
                 result[name] = result.get(name, 0) + secs / 3600
                 count += 1
+
         if count == 0:
             r = requests.get(
                 "https://app.trackingtime.co/api/v4/projects",
@@ -72,32 +112,9 @@ def aggregate_hours(date_from, date_to):
                     if name and hours > 0:
                         result[name] = result.get(name, 0) + hours
                         count += 1
+
         user_stats.append({"user": user["name"], "events": count})
-    return result, user_stats
 
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok"})
-
-@app.route("/hours", methods=["GET"])
-def get_hours():
-    """Sync standard - ultimele 12 luni (rapid)"""
-    date_from = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-    date_to = datetime.now().strftime("%Y-%m-%d")
-    result, user_stats = aggregate_hours(date_from, date_to)
-    return jsonify({
-        "projects": {k: round(v, 4) for k, v in result.items()},
-        "count": len(result),
-        "users": user_stats,
-        "range": f"{date_from} → {date_to}"
-    })
-
-@app.route("/hours/alltime", methods=["GET"])
-def get_hours_alltime():
-    """Sync complet - din 2020 pana azi (mai lent, pentru istoric complet)"""
-    date_from = "2020-01-01"
-    date_to = datetime.now().strftime("%Y-%m-%d")
-    result, user_stats = aggregate_hours(date_from, date_to)
     return jsonify({
         "projects": {k: round(v, 4) for k, v in result.items()},
         "count": len(result),
