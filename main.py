@@ -7,38 +7,19 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-USERS = [
-    {
-        "name": "Marius Poenar",
-        "email": os.environ.get("TT_EMAIL", "m.poenar@me-concept.de"),
-        "password": os.environ.get("TT_PASSWORD", "")
-    },
-    {
-        "name": "Ioan Chindea",
-        "email": os.environ.get("TT_EMAIL_2", "i.chindea@me-concept.de"),
-        "password": os.environ.get("TT_PASSWORD_2", "")
-    },
-    {
-        "name": "Stefan Picu",
-        "email": os.environ.get("TT_EMAIL_3", "s.picu@me-concept.de"),
-        "password": os.environ.get("TT_PASSWORD_3", "")
-    },
-    {
-        "name": "Martin Mayer",
-        "email": os.environ.get("TT_EMAIL_4", "m.mayer@me-concept.de"),
-        "password": os.environ.get("TT_PASSWORD_4", "")
-    },
-]
+# Credentiale admin (Marius) - suficient pentru toti userii
+ADMIN_EMAIL = os.environ.get("TT_EMAIL", "m.poenar@me-concept.de")
+ADMIN_PASSWORD = os.environ.get("TT_PASSWORD", "")
 
-def get_auth_header(email, password):
-    credentials = f"{email}:{password}"
+def get_auth_header():
+    credentials = f"{ADMIN_EMAIL}:{ADMIN_PASSWORD}"
     encoded = base64.b64encode(credentials.encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
-def tt_get(path, email, password, params=None):
+def tt_get(path, params=None):
     r = requests.get(
         f"https://app.trackingtime.co{path}",
-        headers=get_auth_header(email, password),
+        headers=get_auth_header(),
         params=params,
         timeout=15
     )
@@ -50,66 +31,41 @@ def tt_get(path, email, password, params=None):
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/debug_martin", methods=["GET"])
-def debug_martin():
-    email = os.environ.get("TT_EMAIL_4", "m.mayer@me-concept.de")
-    password = os.environ.get("TT_PASSWORD_4", "")
-    credentials = f"{email}:{password}"
-    encoded = base64.b64encode(credentials.encode()).decode()
-    r = requests.get(
-        "https://app.trackingtime.co/api/v4/users",
-        headers={"Authorization": f"Basic {encoded}", "Accept": "application/json"},
-        timeout=15
-    )
-    return jsonify({
-        "email": email,
-        "password_length": len(password),
-        "password_first5": password[:5],
-        "password_last5": password[-5:],
-        "status": r.status_code,
-        "response": r.json() if r.ok else r.text[:300]
-    })
-
-
-def test_auth():
-    """Testeaza autentificarea pentru fiecare user"""
-    results = {}
-    for user in USERS:
-        if not user["password"]:
-            results[user["name"]] = "no password"
-            continue
-        d = tt_get("/api/v4/users", user["email"], user["password"])
-        if d and d.get("data"):
-            u = d["data"][0] if isinstance(d["data"], list) else d["data"]
-            results[user["name"]] = f"OK - {u.get('name')} {u.get('surname')} ({u.get('role')})"
-        else:
-            results[user["name"]] = "FAILED - wrong password or no access"
-    return jsonify(results)
-
-
+@app.route("/hours", methods=["GET"])
 def get_hours():
-    """Agregate ore per proiect (campul 'p') pentru toti userii"""
+    """Preia orele pentru toti userii din cont folosind credentiale admin"""
     result = {}
     user_stats = []
 
-    for user in USERS:
-        if not user["password"]:
+    # Pasul 1: Obtine lista de useri (merge cu admin)
+    users_data = tt_get("/api/v4/users")
+    if not users_data:
+        return jsonify({"error": "Nu pot obtine lista de useri", "projects": {}, "count": 0})
+
+    users = users_data.get("data", [])
+
+    # Pasul 2: Pentru fiecare user, preia evenimentele
+    for user in users:
+        uid = user.get("id")
+        uname = f"{user.get('name', '')} {user.get('surname', '')}".strip()
+        
+        if not uid:
             continue
 
         count = 0
-        d = tt_get("/api/v4/events", user["email"], user["password"])
+        # Incearca sa preia evenimentele pentru acest user
+        d = tt_get("/api/v4/events", {"user_id": uid})
         if d:
             for evt in d.get("data", []):
-                # Campul "p" = project name in TrackingTime
                 name = (evt.get("p") or evt.get("c") or "").strip()
                 secs = float(evt.get("d") or 0)
                 if name and secs > 0:
                     result[name] = result.get(name, 0) + secs / 3600
                     count += 1
 
-        # Fallback pe projects daca events e gol
+        # Fallback: projects per user
         if count == 0:
-            d = tt_get("/api/v4/projects", user["email"], user["password"])
+            d = tt_get("/api/v4/projects", {"user_id": uid})
             if d:
                 for p in d.get("data", []):
                     name = (p.get("name") or "").strip()
@@ -120,7 +76,7 @@ def get_hours():
                         result[name] = result.get(name, 0) + hours
                         count += 1
 
-        user_stats.append({"user": user["name"], "events": count})
+        user_stats.append({"user": uname, "id": uid, "events": count})
 
     return jsonify({
         "projects": {k: round(v, 1) for k, v in result.items()},
