@@ -50,7 +50,27 @@ def tt_get(path, email, password, params=None):
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/test_auth", methods=["GET"])
+@app.route("/debug_martin", methods=["GET"])
+def debug_martin():
+    email = os.environ.get("TT_EMAIL_4", "m.mayer@me-concept.de")
+    password = os.environ.get("TT_PASSWORD_4", "")
+    credentials = f"{email}:{password}"
+    encoded = base64.b64encode(credentials.encode()).decode()
+    r = requests.get(
+        "https://app.trackingtime.co/api/v4/users",
+        headers={"Authorization": f"Basic {encoded}", "Accept": "application/json"},
+        timeout=15
+    )
+    return jsonify({
+        "email": email,
+        "password_length": len(password),
+        "password_first5": password[:5],
+        "password_last5": password[-5:],
+        "status": r.status_code,
+        "response": r.json() if r.ok else r.text[:300]
+    })
+
+
 def test_auth():
     """Testeaza autentificarea pentru fiecare user"""
     results = {}
