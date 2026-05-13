@@ -9,10 +9,10 @@ CORS(app)
 
 USERS = [
     {"name": "Marius Poenar",  "email": os.environ.get("TT_EMAIL",   "m.poenar@me-concept.de"), "password": os.environ.get("TT_PASSWORD",   "")},
-    {"name": "Ioan Chindea",   "email": os.environ.get("TT_EMAIL_2", "i.chindea@me-concept.de"),"password": os.environ.get("TT_PASSWORD_2", "")},
-    {"name": "Stefan Picu",    "email": os.environ.get("TT_EMAIL_3", "s.picu@me-concept.de"),   "password": os.environ.get("TT_PASSWORD_3", "")},
-    {"name": "Martin Mayer",   "email": os.environ.get("TT_EMAIL_4", "m.mayer@me-concept.de"),  "password": os.environ.get("TT_PASSWORD_4", "")},
-    {"name": "Vadim Rosca",    "email": os.environ.get("TT_EMAIL_5", "v.rosca@me-concept.de"),  "password": os.environ.get("TT_PASSWORD_5", "")},
+    {"name": "Ioan Chindea",   "email": os.environ.get("TT_EMAIL_2", "i.chindea@me-concept.de"), "password": os.environ.get("TT_PASSWORD_2", "")},
+    {"name": "Stefan Picu",    "email": os.environ.get("TT_EMAIL_3", "s.picu@me-concept.de"),    "password": os.environ.get("TT_PASSWORD_3", "")},
+    {"name": "Martin Mayer",   "email": os.environ.get("TT_EMAIL_4", "m.mayer@me-concept.de"),   "password": os.environ.get("TT_PASSWORD_4", "")},
+    {"name": "Vadim Rosca",    "email": os.environ.get("TT_EMAIL_5", "v.rosca@me-concept.de"),   "password": os.environ.get("TT_PASSWORD_5", "")},
 ]
 
 def get_auth_header(email, password):
@@ -44,6 +44,7 @@ def get_hours():
             continue
         count = 0
 
+        # Campul "p" = project name in TrackingTime
         d = tt_get("/api/v4/events", user["email"], user["password"])
         if d:
             for evt in d.get("data", []):
@@ -53,6 +54,7 @@ def get_hours():
                     result[name] = result.get(name, 0) + secs / 3600
                     count += 1
 
+        # Fallback: projects cu worked_hours
         if count == 0:
             d = tt_get("/api/v4/projects", user["email"], user["password"])
             if d:
