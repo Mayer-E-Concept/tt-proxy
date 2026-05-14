@@ -3,7 +3,6 @@ from flask_cors import CORS
 import requests
 import base64
 import os
-from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -20,73 +19,76 @@ def get_auth_header(email, password):
     encoded = base64.b64encode(f"{email}:{password}".encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
-def get_user_hours(email, password):
-    """Preia orele per proiect pentru un user via /projects (worked_hours = all time total)"""
-    result = {}
-    count = 0
-    
+def tt_get(path, email, password, params=None):
     r = requests.get(
-        "https://app.trackingtime.co/api/v4/projects",
+        f"https://app.trackingtime.co{path}",
         headers=get_auth_header(email, password),
+        params=params,
         timeout=15
     )
     if r.ok:
-        for p in r.json().get("data", []):
-            name = (p.get("name") or "").strip()
-            hours = float(p.get("worked_hours") or 0)
-            if not hours and p.get("accumulated_time"):
-                hours = float(p["accumulated_time"]) / 3600
-            if name and hours > 0:
-                result[name] = hours
-                count += 1
-    
-    # Fallback pe events daca projects nu returneaza nimic
-    if count == 0:
-        r = requests.get(
-            "https://app.trackingtime.co/api/v4/events",
-            headers=get_auth_header(email, password),
-            timeout=15
-        )
-        if r.ok:
-            for evt in r.json().get("data", []):
-                name = (evt.get("p") or evt.get("c") or "").strip()
-                secs = float(evt.get("d") or 0)
-                if name and secs > 0:
-                    result[name] = result.get(name, 0) + secs / 3600
-                    count += 1
-    
-    return result, count
+        return r.json()
+    return None
 
-@app.route("/health", methods=["GET"])
+@app.route("/health")
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/hours", methods=["GET"])
+@app.route("/debug_tracking")
+def debug_tracking():
+    """Verifica timerul activ pentru fiecare user"""
+    results = {}
+    for user in USERS:
+        if not user["password"]:
+            continue
+        d = tt_get("/api/v4/tracking", user["email"], user["password"])
+        results[user["name"]] = {
+            "raw": d,
+            "has_active": bool(d and d.get("data"))
+        }
+    return jsonify(results)
+
+@app.route("/hours")
+@app.route("/hours/alltime")
 def get_hours():
-    """Returneaza orele per proiect pentru toti userii (all time via /projects)"""
-    combined = {}
+    result = {}
     user_stats = []
 
     for user in USERS:
         if not user["password"]:
             continue
-        
-        user_hours, count = get_user_hours(user["email"], user["password"])
-        for name, hours in user_hours.items():
-            combined[name] = combined.get(name, 0) + hours
-        
+        count = 0
+
+        # 1. Events finalizate
+        d = tt_get("/api/v4/events", user["email"], user["password"])
+        if d:
+            for evt in d.get("data", []):
+                name = (evt.get("p") or evt.get("c") or "").strip()
+                secs = float(evt.get("d") or 0)
+                if name and secs > 0:
+                    result[name] = result.get(name, 0) + secs / 3600
+                    count += 1
+
+        # 2. Timer activ curent (sesiune neincisa)
+        t = tt_get("/api/v4/tracking", user["email"], user["password"])
+        if t:
+            td = t.get("data")
+            if isinstance(td, list) and td:
+                td = td[0]
+            if isinstance(td, dict):
+                name = (td.get("p") or td.get("c") or "").strip()
+                secs = float(td.get("d") or td.get("duration") or 0)
+                if name and secs > 0:
+                    result[name] = result.get(name, 0) + secs / 3600
+                    count += 1
+
         user_stats.append({"user": user["name"], "events": count})
 
     return jsonify({
-        "projects": {k: round(v, 4) for k, v in combined.items()},
-        "count": len(combined),
+        "projects": {k: round(v, 4) for k, v in result.items()},
+        "count": len(result),
         "users": user_stats
     })
-
-@app.route("/hours/alltime", methods=["GET"])
-def get_hours_alltime():
-    """Alias pentru /hours - toate orele via /projects sunt deja all time"""
-    return get_hours()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
