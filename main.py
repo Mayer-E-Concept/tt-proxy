@@ -52,13 +52,21 @@ def debug_tracking():
 def debug_vadim_projects():
     user = USERS[4]  # Vadim
     results = {}
-    for path in ["/api/v4/projects", "/api/v4/tasks", "/api/v4/attendance", "/api/v4/timeoffs"]:
+    # Test different project queries
+    for path in [
+        "/api/v4/projects",
+        "/api/v4/projects?all=true",
+        "/api/v4/projects?shared=true",
+        "/api/v4/projects?member=true",
+        "/api/v4/projects?type=shared",
+    ]:
         d = tt_get(path, user["email"], user["password"])
         if d:
             items = d.get("data", [])
             results[path] = {
                 "count": len(items) if isinstance(items, list) else "N/A",
-                "sample": items[:2] if isinstance(items, list) else items
+                "names": [p.get("name") for p in items] if isinstance(items, list) else str(items)[:200],
+                "is_public": [p.get("is_public") for p in items] if isinstance(items, list) else []
             }
         else:
             results[path] = {"error": "no response"}
