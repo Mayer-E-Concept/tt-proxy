@@ -48,7 +48,22 @@ def debug_tracking():
         }
     return jsonify(results)
 
-@app.route("/hours")
+@app.route("/debug_vadim_projects")
+def debug_vadim_projects():
+    user = USERS[4]  # Vadim
+    results = {}
+    for path in ["/api/v4/projects", "/api/v4/tasks"]:
+        d = tt_get(path, user["email"], user["password"])
+        if d:
+            items = d.get("data", [])
+            results[path] = {
+                "count": len(items),
+                "items": [{"name": p.get("name"), "worked_hours": p.get("worked_hours"), "accumulated_time": p.get("accumulated_time")} for p in items]
+            }
+        else:
+            results[path] = {"error": "no response"}
+    return jsonify(results)
+
 @app.route("/hours/alltime")
 def get_hours():
     result = {}
