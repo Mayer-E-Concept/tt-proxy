@@ -34,75 +34,40 @@ def tt_get(path, email, password, params=None):
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/debug_tracking")
-def debug_tracking():
-    """Verifica timerul activ pentru fiecare user"""
-    results = {}
-    for user in USERS:
-        if not user["password"]:
-            continue
-        d = tt_get("/api/v4/tracking", user["email"], user["password"])
-        results[user["name"]] = {
-            "raw": d,
-            "has_active": bool(d and d.get("data"))
-        }
-    return jsonify(results)
-
-@app.route("/debug_all_projects")
-def debug_all_projects():
-    """Verifica ce proiecte vede fiecare user via /api/v4/projects"""
-    results = {}
-    for user in USERS:
-        if not user["password"]:
-            continue
-        d = tt_get("/api/v4/projects", user["email"], user["password"])
-        if d:
-            items = d.get("data", [])
-            results[user["name"]] = [
-                {"name": p.get("name"), "worked_hours": p.get("worked_hours"), "is_public": p.get("is_public"), "id": p.get("id")}
-                for p in items
-            ]
-        else:
-            results[user["name"]] = "no response"
-    return jsonify(results)
-
+@app.route("/hours")
 @app.route("/hours/alltime")
 def get_hours():
-    result = {}
+    """
+    Agregate proiecte de la toti userii.
+    Deduplicam dupa nume de proiect si luam valoarea MAXIMA (= totalul echipei).
+    Astfel, chiar daca un proiect e vazut de mai multi useri, luam totalul corect.
+    Si daca un proiect e vazut doar de un singur user, tot il includem.
+    """
+    all_projects = {}  # {project_name: max_worked_hours}
     user_stats = []
 
     for user in USERS:
         if not user["password"]:
             continue
+        d = tt_get("/api/v4/projects", user["email"], user["password"])
         count = 0
-
-        # 1. Events finalizate
-        d = tt_get("/api/v4/events", user["email"], user["password"])
         if d:
-            for evt in d.get("data", []):
-                name = (evt.get("p") or evt.get("c") or "").strip()
-                secs = float(evt.get("d") or 0)
-                if name and secs > 0:
-                    result[name] = result.get(name, 0) + secs / 3600
+            items = d.get("data", [])
+            for p in items:
+                name = (p.get("name") or "").strip()
+                hours = float(p.get("worked_hours") or 0)
+                if name:
+                    # Luam maximul - totalul echipei e intotdeauna >= totalul individual
+                    if name not in all_projects or hours > all_projects[name]:
+                        all_projects[name] = hours
                     count += 1
+        user_stats.append({"user": user["name"], "projects_visible": count})
 
-        # 2. Timer activ curent (sesiune neincisa)
-        t = tt_get("/api/v4/tracking", user["email"], user["password"])
-        if t:
-            td = t.get("data")
-            if isinstance(td, list) and td:
-                td = td[0]
-            if isinstance(td, dict):
-                name = (td.get("p") or td.get("c") or "").strip()
-                secs = float(td.get("d") or td.get("duration") or 0)
-                if name and secs > 0:
-                    result[name] = result.get(name, 0) + secs / 3600
-                    count += 1
-
-        user_stats.append({"user": user["name"], "events": count})
+    # Filtreaza proiectele cu 0 ore
+    result = {k: round(v, 4) for k, v in all_projects.items() if v > 0}
 
     return jsonify({
-        "projects": {k: round(v, 4) for k, v in result.items()},
+        "projects": result,
         "count": len(result),
         "users": user_stats
     })
