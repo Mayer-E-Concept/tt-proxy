@@ -48,28 +48,22 @@ def debug_tracking():
         }
     return jsonify(results)
 
-@app.route("/debug_vadim_projects")
-def debug_vadim_projects():
-    user = USERS[4]  # Vadim
+@app.route("/debug_all_projects")
+def debug_all_projects():
+    """Verifica ce proiecte vede fiecare user via /api/v4/projects"""
     results = {}
-    # Test different project queries
-    for path in [
-        "/api/v4/projects",
-        "/api/v4/projects?all=true",
-        "/api/v4/projects?shared=true",
-        "/api/v4/projects?member=true",
-        "/api/v4/projects?type=shared",
-    ]:
-        d = tt_get(path, user["email"], user["password"])
+    for user in USERS:
+        if not user["password"]:
+            continue
+        d = tt_get("/api/v4/projects", user["email"], user["password"])
         if d:
             items = d.get("data", [])
-            results[path] = {
-                "count": len(items) if isinstance(items, list) else "N/A",
-                "names": [p.get("name") for p in items] if isinstance(items, list) else str(items)[:200],
-                "is_public": [p.get("is_public") for p in items] if isinstance(items, list) else []
-            }
+            results[user["name"]] = [
+                {"name": p.get("name"), "worked_hours": p.get("worked_hours"), "is_public": p.get("is_public"), "id": p.get("id")}
+                for p in items
+            ]
         else:
-            results[path] = {"error": "no response"}
+            results[user["name"]] = "no response"
     return jsonify(results)
 
 @app.route("/hours/alltime")
