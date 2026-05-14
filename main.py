@@ -19,11 +19,10 @@ def get_auth_header(email, password):
     encoded = base64.b64encode(f"{email}:{password}".encode()).decode()
     return {"Authorization": f"Basic {encoded}", "Accept": "application/json"}
 
-def tt_get(path, email, password, params=None):
+def tt_get(path, email, password):
     r = requests.get(
         f"https://app.trackingtime.co{path}",
         headers=get_auth_header(email, password),
-        params=params,
         timeout=15
     )
     if r.ok:
@@ -38,38 +37,29 @@ def health():
 @app.route("/hours/alltime")
 def get_hours():
     """
-    Agregate proiecte de la toti userii.
-    Deduplicam dupa nume de proiect si luam valoarea MAXIMA (= totalul echipei).
-    Astfel, chiar daca un proiect e vazut de mai multi useri, luam totalul corect.
-    Si daca un proiect e vazut doar de un singur user, tot il includem.
+    Fiecare user vede worked_hours = totalul ECHIPEI pentru proiectele la care e member.
+    Agregam de la toti userii, deduplicam dupa nume, luam valoarea maxima.
+    Astfel obtinem totalul corect indiferent de cine e member in ce proiect.
     """
     all_projects = {}  # {project_name: max_worked_hours}
-    user_stats = []
 
     for user in USERS:
         if not user["password"]:
             continue
         d = tt_get("/api/v4/projects", user["email"], user["password"])
-        count = 0
-        if d:
-            items = d.get("data", [])
-            for p in items:
-                name = (p.get("name") or "").strip()
-                hours = float(p.get("worked_hours") or 0)
-                if name:
-                    # Luam maximul - totalul echipei e intotdeauna >= totalul individual
-                    if name not in all_projects or hours > all_projects[name]:
-                        all_projects[name] = hours
-                    count += 1
-        user_stats.append({"user": user["name"], "projects_visible": count})
+        if not d:
+            continue
+        for p in d.get("data", []):
+            name = (p.get("name") or "").strip()
+            hours = float(p.get("worked_hours") or 0)
+            if name and hours > all_projects.get(name, -1):
+                all_projects[name] = hours
 
-    # Filtreaza proiectele cu 0 ore
     result = {k: round(v, 4) for k, v in all_projects.items() if v > 0}
 
     return jsonify({
         "projects": result,
-        "count": len(result),
-        "users": user_stats
+        "count": len(result)
     })
 
 if __name__ == "__main__":
