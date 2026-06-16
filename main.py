@@ -1,11 +1,18 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
 import base64
+import hashlib
 import os
+import time
 
 app = Flask(__name__)
-CORS(app)
+
+# ── CORS: doar originea aplicatiei (GitHub Pages). Suprascrie cu env ALLOWED_ORIGINS. ──
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
+    "ALLOWED_ORIGINS", "https://mpoenar.github.io"
+).split(",") if o.strip()]
+CORS(app, origins=ALLOWED_ORIGINS, allow_headers=["Authorization", "Content-Type"])
 
 USERS = [
     {"name": "Marius Poenar",  "email": os.environ.get("TT_EMAIL",   "m.poenar@me-concept.de"), "password": os.environ.get("TT_PASSWORD",   "")},
@@ -14,6 +21,49 @@ USERS = [
     {"name": "Martin Mayer",   "email": os.environ.get("TT_EMAIL_4", "m.mayer@me-concept.de"),   "password": os.environ.get("TT_PASSWORD_4", "")},
     {"name": "Vadim Rosca",    "email": os.environ.get("TT_EMAIL_5", "v.rosca@me-concept.de"),   "password": os.environ.get("TT_PASSWORD_5", "")},
 ]
+
+# ── Autorizare: tokenul MSAL al userului e validat la Graph /me.
+#    Daca ALLOWED_EMAILS e setat (lista separata prin virgula), doar acele adrese trec. ──
+ALLOWED_EMAILS = {e.strip().lower() for e in os.environ.get("ALLOWED_EMAILS", "").split(",") if e.strip()}
+_token_cache = {}   # sha256(token) -> (email, expiry_epoch)
+_TOKEN_TTL = 300    # 5 minute
+
+def validate_request():
+    """Returneaza (email, None) daca tokenul e valid (+ in whitelist daca e setata),
+    altfel (None, (mesaj, status_http))."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, ("missing_token", 401)
+    token = auth[7:].strip()
+    if not token:
+        return None, ("missing_token", 401)
+
+    key = hashlib.sha256(token.encode()).hexdigest()
+    now = time.time()
+    cached = _token_cache.get(key)
+    if cached and cached[1] > now:
+        email = cached[0]
+    else:
+        try:
+            r = requests.get(
+                "https://graph.microsoft.com/v1.0/me",
+                headers={"Authorization": "Bearer " + token},
+                timeout=10,
+            )
+        except requests.RequestException:
+            return None, ("graph_unreachable", 503)
+        if r.status_code != 200:
+            return None, ("invalid_token", 401)
+        me = r.json()
+        email = (me.get("mail") or me.get("userPrincipalName") or "").lower()
+        # curata intrarile expirate, apoi cache
+        for k in [k for k, v in _token_cache.items() if v[1] <= now]:
+            _token_cache.pop(k, None)
+        _token_cache[key] = (email, now + _TOKEN_TTL)
+
+    if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
+        return None, ("forbidden", 403)
+    return email, None
 
 def get_auth_header(email, password):
     encoded = base64.b64encode(f"{email}:{password}".encode()).decode()
@@ -41,6 +91,11 @@ def get_hours():
     Agregam de la toti userii, deduplicam dupa nume, luam valoarea maxima.
     Astfel obtinem totalul corect indiferent de cine e member in ce proiect.
     """
+    email, err = validate_request()
+    if err:
+        msg, status = err
+        return jsonify({"error": msg}), status
+
     all_projects = {}  # {project_name: max_worked_hours}
 
     for user in USERS:
