@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 # ── CORS: doar originea aplicatiei (GitHub Pages). Suprascrie cu env ALLOWED_ORIGINS. ──
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
-    "ALLOWED_ORIGINS", "https://mpoenar.github.io"
+    "ALLOWED_ORIGINS", "https://mayer-e-concept.github.io"
 ).split(",") if o.strip()]
 CORS(app, origins=ALLOWED_ORIGINS, allow_headers=["Authorization", "Content-Type"])
 
